@@ -62,6 +62,7 @@ public:
             i.account = account;
             i.action = cronaction;
             i.interval = interval;
+            i.is_active = 1;
             i.version = 0;
             i.num_executions = 0;
             i.created_at = now();
@@ -82,6 +83,7 @@ public:
         cronjob_table c(code_account, code_account);
         auto itr = c.find(account);
         eosio_assert(itr != c.end(), "cronjob not found!");
+        eosio_assert(itr->is_active == 1, "cronjob is inactive!");
         eosio_assert(itr->version == version, "cronjob version updated, old cron schedule stopped!");
         call_cron(itr->account, itr->action);
 
