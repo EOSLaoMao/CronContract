@@ -13,10 +13,9 @@ class croncontract : contract {
 
 private:
 
-    void schedule_cron(account_name account,
+    void call_cron(account_name account,
                     std::string cronaction)
     {
-        print("schedule_cron called");
         eosio::transaction out;
 
         action act = action(
@@ -29,6 +28,19 @@ private:
         out.send((uint128_t(code_account) << 64) | current_time(), code_account, true);
     }
 
+    void call_next(account_name account, uint64_t interval, uint64_t version, uint64_t nonce)
+    {
+        eosio::transaction out;
+        action act = action(
+          permission_level{ code_account, N(active) },
+          code_account, N(schedule),
+          std::make_tuple(account, version)
+        );
+        out.actions.emplace_back(act);
+        out.delay_sec = interval;
+        out.send((uint128_t(code_account) << 64) | current_time() | nonce, code_account, true);
+    }
+
 public:
     using contract::contract;
     croncontract( name self ) : contract(self){}
@@ -36,16 +48,16 @@ public:
     // @abi action addcronjob
     void addcronjob(account_name account,
                     std::string cronaction,
-                    uint64_t interval)
+                    uint64_t interval,
+                    uint64_t version)
     {
         require_auth(account);
 
-        schedule_cron(account, cronaction);
+        call_cron(account, cronaction);
 
         cronjob_table c(code_account, code_account);
         auto itr = c.find(account);
         if(itr == c.end()) {
-          print(" | emplace");
           c.emplace(ram_payer, [&](auto &i) {
             i.account = account;
             i.action = cronaction;
@@ -56,17 +68,31 @@ public:
             i.updated_at = now();
           });
         } else {
-          print(" | modify");
           c.modify(itr, ram_payer, [&](auto &i) {
             i.action = cronaction;
             i.interval = interval;
+            i.version = version;
             i.updated_at = now();
           });
         }
     }
 
     // @abi action schedule
-    void schedule(account_name account, std::string action){
+    void schedule(account_name account, uint64_t version){
+        cronjob_table c(code_account, code_account);
+        auto itr = c.find(account);
+        eosio_assert(itr != c.end(), "cronjob not found!");
+        eosio_assert(itr->version == version, "cronjob version updated, old cron schedule stopped!");
+        call_cron(itr->account, itr->action);
+
+        auto num_executions = itr->num_executions + 1;
+        c.modify(itr, ram_payer, [&](auto &i) {
+          i.num_executions = num_executions;
+          i.updated_at = now();
+        });
+
+        call_next(account, itr->interval, itr->version, num_executions);
+
     }
 
     void apply( account_name contract, account_name action ) {
