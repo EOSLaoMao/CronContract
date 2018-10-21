@@ -14,7 +14,8 @@ class croncontract : contract {
 private:
 
     void call_cron(account_name account,
-                    std::string cronaction)
+                    std::string cronaction,
+                    uint64_t nonce)
     {
         eosio::transaction out;
 
@@ -25,7 +26,7 @@ private:
         );
 
         out.actions.emplace_back(act);
-        out.send((uint128_t(code_account) << 64) | current_time(), code_account, true);
+        out.send((uint128_t(code_account) << 64) | current_time() | nonce, code_account, true);
     }
 
     void call_next(account_name account, uint64_t interval, uint64_t version, uint64_t nonce)
@@ -53,7 +54,7 @@ public:
     {
         require_auth(account);
 
-        call_cron(account, cronaction);
+        call_cron(account, cronaction, current_time());
 
         cronjob_table c(code_account, code_account);
         auto itr = c.find(account);
@@ -70,6 +71,7 @@ public:
           });
         } else {
           c.modify(itr, ram_payer, [&](auto &i) {
+            i.is_active = 1;
             i.action = cronaction;
             i.interval = interval;
             i.version = version;
@@ -85,15 +87,17 @@ public:
         eosio_assert(itr != c.end(), "cronjob not found!");
         eosio_assert(itr->is_active == 1, "cronjob is inactive!");
         eosio_assert(itr->version == version, "cronjob version updated, old cron schedule stopped!");
-        call_cron(itr->account, itr->action);
 
         auto num_executions = itr->num_executions + 1;
+
+        call_cron(itr->account, itr->action, version);
+
         c.modify(itr, ram_payer, [&](auto &i) {
           i.num_executions = num_executions;
           i.updated_at = now();
         });
 
-        call_next(account, itr->interval, itr->version, num_executions);
+        call_next(account, itr->interval, itr->version, num_executions|version|current_time());
 
     }
 
@@ -107,6 +111,10 @@ public:
       };
     }
 };
+
+void apply_onerror(uint64_t receiver, const onerror& error ) {
+   print("onerror called on ", name{receiver}, "\n");
+}
 
 extern "C" {
   [[noreturn]] void apply( uint64_t receiver, uint64_t code, uint64_t action ) {
