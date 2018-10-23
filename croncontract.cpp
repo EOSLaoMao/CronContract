@@ -9,6 +9,11 @@ using namespace eosiosystem;
 using namespace cron; 
 using std::string;
 
+
+void apply_onerror(uint64_t receiver, const onerror& error ) {
+  print("!!!!starting onerror\n");
+}
+
 class croncontract : contract {
 
 private:
@@ -18,15 +23,16 @@ private:
                     uint64_t nonce)
     {
         eosio::transaction out;
+        print("helloworld nonce:", nonce);
 
         action act = action(
           permission_level{ account, N(cronperm) },
           account, string_to_name(cronaction.c_str()),
-          std::make_tuple()
+          std::make_tuple(nonce)
         );
 
         out.actions.emplace_back(act);
-        out.send((uint128_t(code_account) << 64) | current_time() | nonce, code_account, true);
+        out.send(nonce, code_account, true);
     }
 
     void call_next(account_name account, uint64_t interval, uint64_t version, uint64_t nonce)
@@ -54,7 +60,7 @@ public:
     {
         require_auth(account);
 
-        call_cron(account, cronaction, current_time());
+        // call_cron(account, cronaction, current_time());
 
         cronjob_table c(code_account, code_account);
         auto itr = c.find(account);
@@ -90,19 +96,26 @@ public:
 
         auto num_executions = itr->num_executions + 1;
 
-        call_cron(itr->account, itr->action, version);
+        auto new_nonce = (uint128_t(code_account) << 64) | current_time() | version;
+        call_cron(itr->account, itr->action, new_nonce);
+
 
         c.modify(itr, ram_payer, [&](auto &i) {
           i.num_executions = num_executions;
           i.updated_at = now();
         });
 
-        call_next(account, itr->interval, itr->version, num_executions|version|current_time());
+        auto nonce = num_executions|version|current_time();
+        print(" | gonna call schedule:", nonce );
+        call_next(account, itr->interval, itr->version, nonce);
+        print(" | schedule CALLED!!" );
 
     }
 
     void apply( account_name contract, account_name action ) {
+      print(" | 117 applied called!!!!");
       if( contract != _self ) return;
+      print(" | 119");
       auto& thiscontract = *this;
       switch( action ) {
         EOSIO_API( croncontract,
@@ -112,12 +125,12 @@ public:
     }
 };
 
-void apply_onerror(uint64_t receiver, const onerror& error ) {
-   print("onerror called on ", name{receiver}, "\n");
-}
-
 extern "C" {
   [[noreturn]] void apply( uint64_t receiver, uint64_t code, uint64_t action ) {
+    print("apply called!!!\n");
+    if( code == N(eosio) && action == N(onerror) ) {
+      apply_onerror( receiver, onerror::from_current_action() );
+    }
     croncontract c( receiver );
     c.apply( code, action );
     eosio_exit(0);
